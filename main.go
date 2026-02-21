@@ -158,7 +158,7 @@ func scanFile(resp *sdk.ResponseBuilder, filePath, ext string) error {
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	lineNum := 0
@@ -206,12 +206,17 @@ func extToLanguage(ext string) string {
 }
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
 	srv := buildServer()
 	if err := srv.Serve(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "nox-plugin-triage-agent: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }

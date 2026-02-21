@@ -1,0 +1,7 @@
+name: nox-plugin-triage-agent
+version: 0.1.0
+track: agent-assistance
+description: Automated security finding triage and prioritization for review workflows
+tools:
+  - name: scan
+    description: Scan source files to triage and prioritize security patterns for review
