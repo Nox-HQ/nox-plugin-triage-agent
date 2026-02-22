@@ -150,6 +150,20 @@ func handleScan(ctx context.Context, req sdk.ToolRequest) (*pluginv1.InvokeToolR
 		return nil, fmt.Errorf("walking workspace: %w", err)
 	}
 
+	// AI triage: opt-in LLM-assisted severity adjustment.
+	if aiTriage, _ := req.Input["ai_triage"].(bool); aiTriage {
+		built := resp.Build()
+		if len(built.GetFindings()) > 0 {
+			provider, model, err := resolveProvider()
+			if err != nil {
+				markTriageError(built.GetFindings(), err.Error())
+			} else {
+				aiTriageFindings(ctx, provider, model, built.GetFindings())
+			}
+		}
+		return built, nil
+	}
+
 	return resp.Build(), nil
 }
 

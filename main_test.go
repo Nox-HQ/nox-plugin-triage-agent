@@ -129,6 +129,52 @@ func TestScanNoWorkspace(t *testing.T) {
 	}
 }
 
+func TestScanWithAITriageDisabled(t *testing.T) {
+	client := testClient(t)
+	resp := invokeScan(t, client, testdataDir(t))
+
+	for _, f := range resp.GetFindings() {
+		if _, ok := f.GetMetadata()["ai_triaged"]; ok {
+			t.Error("findings should not have ai_triaged metadata when ai_triage is not set")
+		}
+	}
+}
+
+func TestScanWithAITriageNoProvider(t *testing.T) {
+	client := testClient(t)
+
+	// Explicitly set ai_triage=true but no NOX_AI_* env vars.
+	t.Setenv("NOX_AI_API_KEY", "")
+	t.Setenv("NOX_AI_PROVIDER", "")
+
+	input, _ := structpb.NewStruct(map[string]any{
+		"workspace_root": testdataDir(t),
+		"ai_triage":      true,
+	})
+	resp, err := client.InvokeTool(context.Background(), &pluginv1.InvokeToolRequest{
+		ToolName: "scan",
+		Input:    input,
+	})
+	if err != nil {
+		t.Fatalf("InvokeTool(scan): %v", err)
+	}
+
+	if len(resp.GetFindings()) == 0 {
+		t.Fatal("expected findings even when AI triage cannot resolve provider")
+	}
+
+	hasError := false
+	for _, f := range resp.GetFindings() {
+		if f.GetMetadata()["ai_triage_error"] != "" {
+			hasError = true
+			break
+		}
+	}
+	if !hasError {
+		t.Error("expected at least one finding with ai_triage_error metadata")
+	}
+}
+
 // --- helpers ---
 
 func testdataDir(t *testing.T) string {
