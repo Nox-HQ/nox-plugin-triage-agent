@@ -82,7 +82,7 @@ func resolveProvider() (plannerllm.Provider, string, error) {
 			return nil, "", fmt.Errorf("NOX_AI_API_KEY is required for cohere provider")
 		}
 		if model == "" {
-			model = "command-r"
+			model = "command-r-plus"
 		}
 		p := providers.NewCohereProvider(providers.CohereConfig{
 			APIKey:  apiKey,
@@ -91,7 +91,45 @@ func resolveProvider() (plannerllm.Provider, string, error) {
 		})
 		return p, model, nil
 
+	case "bedrock":
+		accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
+		secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+		sessionToken := os.Getenv("AWS_SESSION_TOKEN")
+		region := os.Getenv("AWS_REGION")
+		if accessKey == "" || secretKey == "" {
+			return nil, "", fmt.Errorf("AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are required for bedrock provider")
+		}
+		if model == "" {
+			model = "anthropic.claude-3-sonnet-20240229-v1:0"
+		}
+		p := providers.NewBedrockProvider(providers.BedrockConfig{
+			Region:         region,
+			AccessKeyID:    accessKey,
+			SecretAccessKey: secretKey,
+			SessionToken:   sessionToken,
+			Model:          model,
+		})
+		return p, model, nil
+
+	case "copilot":
+		token := apiKey
+		if token == "" {
+			token = os.Getenv("GITHUB_TOKEN")
+		}
+		if token == "" {
+			return nil, "", fmt.Errorf("NOX_AI_API_KEY or GITHUB_TOKEN is required for copilot provider")
+		}
+		if model == "" {
+			model = "gpt-4o"
+		}
+		p := providers.NewCopilotProvider(providers.CopilotConfig{
+			Token:   token,
+			BaseURL: baseURL,
+			Model:   model,
+		})
+		return p, model, nil
+
 	default:
-		return nil, "", fmt.Errorf("unsupported provider: %s", providerName)
+		return nil, "", fmt.Errorf("unsupported provider: %s (supported: openai, anthropic, gemini, ollama, cohere, bedrock, copilot)", providerName)
 	}
 }
