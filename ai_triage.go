@@ -7,9 +7,9 @@ import (
 	"log"
 	"strings"
 
-	plannerllm "go.klarlabs.de/agent/contrib/planner-llm"
 	pluginv1 "github.com/nox-hq/nox/gen/nox/plugin/v1"
 	"github.com/nox-hq/nox/sdk"
+	plannerllm "go.klarlabs.de/agent/contrib/planner-llm"
 )
 
 const triageSystemPrompt = `You are a security triage assistant. You analyze code security findings and provide contextual severity adjustments.

@@ -103,11 +103,11 @@ func resolveProvider() (plannerllm.Provider, string, error) {
 			model = "anthropic.claude-3-sonnet-20240229-v1:0"
 		}
 		p := providers.NewBedrockProvider(providers.BedrockConfig{
-			Region:         region,
-			AccessKeyID:    accessKey,
+			Region:          region,
+			AccessKeyID:     accessKey,
 			SecretAccessKey: secretKey,
-			SessionToken:   sessionToken,
-			Model:          model,
+			SessionToken:    sessionToken,
+			Model:           model,
 		})
 		return p, model, nil
 
