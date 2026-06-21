@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0]
+
+### Fixed
+- TRIAGE-001 no longer flags identifiers that merely contain `eval`/`exec` as a
+  substring (`retrieval()`, `medieval()`, `execute_plan()`, `evaluateScore()`)
+  as dangerous code execution — the patterns are now word-anchored (`\beval\(`,
+  `\bexec\(`).
+
 ### Added
+- `testdata/clean/` negative fixtures and `TestCleanCodeNoFindings` asserting
+  ordinary business logic produces zero triage findings.
 - Opt-in LLM-assisted severity adjustment via `ai_triage: true` input parameter (Phase 7d)
 - Multi-provider support via agent-go `plannerllm.Provider` interface (OpenAI, Anthropic, Gemini, Ollama, Cohere)
 - Environment-based provider config: `NOX_AI_PROVIDER`, `NOX_AI_API_KEY`, `NOX_AI_MODEL`, `NOX_AI_BASE_URL`
