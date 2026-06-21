@@ -36,9 +36,12 @@ var rules = []triageRule{
 		Priority:   "immediate",
 		Patterns: map[string]*regexp.Regexp{
 			".go": regexp.MustCompile(`(?i)(exec\.Command\(.*\+|os\.Exec|syscall\.Exec)`),
-			".py": regexp.MustCompile(`(?i)(eval\(|exec\(|os\.system\(|subprocess\.call\(.*shell\s*=\s*True|__import__\()`),
-			".js": regexp.MustCompile(`(?i)(eval\(|new\s+Function\(|child_process\.\w+\(|vm\.runInNewContext)`),
-			".ts": regexp.MustCompile(`(?i)(eval\(|new\s+Function\(|child_process\.\w+\(|vm\.runInNewContext)`),
+			// \b anchors eval/exec so identifiers that merely contain them as a
+			// substring — retrieval(), medieval(), upheaval() — are not flagged
+			// as dangerous code execution.
+			".py": regexp.MustCompile(`(?i)(\beval\(|\bexec\(|os\.system\(|subprocess\.call\(.*shell\s*=\s*True|__import__\()`),
+			".js": regexp.MustCompile(`(?i)(\beval\(|new\s+Function\(|child_process\.\w+\(|vm\.runInNewContext)`),
+			".ts": regexp.MustCompile(`(?i)(\beval\(|new\s+Function\(|child_process\.\w+\(|vm\.runInNewContext)`),
 		},
 	},
 	{

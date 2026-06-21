@@ -101,6 +101,23 @@ func TestScanFindsInformationalPattern(t *testing.T) {
 	}
 }
 
+// TestCleanCodeNoFindings is the false-positive guard: ordinary business
+// logic whose identifiers merely contain "eval"/"exec" as a substring
+// (retrieval, medievalTotal, execute, evaluateScore) — with no request access,
+// crypto, or security TODOs — must produce zero triage findings. Guards
+// against TRIAGE-001 substring matching (eval(/exec( without word anchors).
+func TestCleanCodeNoFindings(t *testing.T) {
+	client := testClient(t)
+	resp := invokeScan(t, client, filepath.Join(testdataDir(t), "clean"))
+
+	for _, f := range resp.GetFindings() {
+		t.Errorf("unexpected false positive %s at line %d — %s",
+			f.GetRuleId(),
+			f.GetLocation().GetStartLine(),
+			f.GetMessage())
+	}
+}
+
 func TestScanEmptyWorkspace(t *testing.T) {
 	client := testClient(t)
 	resp := invokeScan(t, client, t.TempDir())
