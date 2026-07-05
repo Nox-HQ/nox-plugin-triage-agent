@@ -1,6 +1,6 @@
 module github.com/nox-hq/nox-plugin-triage-agent
 
-go 1.26.2
+go 1.25.6
 
 require (
 	github.com/nox-hq/nox v1.3.1
