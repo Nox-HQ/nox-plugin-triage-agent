@@ -1,0 +1,555 @@
+{
+  "meta": {
+    "schema_version": "1.0.0",
+    "generated_at": "2026-08-01T20:25:45Z",
+    "tool_name": "nox",
+    "tool_version": "1.26.0",
+    "offline": false,
+    "sast_languages": {
+      "c": "standard",
+      "cpp": "standard",
+      "csharp": "standard",
+      "go": "standard",
+      "java": "standard",
+      "javascript": "deep",
+      "kotlin": "standard",
+      "objc": "standard",
+      "php": "standard",
+      "python": "deep",
+      "ruby": "standard",
+      "rust": "standard",
+      "shell": "standard",
+      "swift": "standard",
+      "typescript": "deep"
+    },
+    "degradations": [
+      {
+        "kind": "plugin",
+        "detail": "20 installed plugin(s) are not listed in plugins.required and did not run: nox/ai-eval, nox/api-abuse, nox/attack-surface, nox/baseline-mgmt, nox/container, nox/dast, nox/depconfusion, nox/grc, nox/k8s-runtime, nox/policy-gate, nox/reachability, nox/red-team, nox/remediate, nox/risk-score, nox/sast, nox/taint-analysis, nox/threat-enrich, nox/threat-explain, nox/threat-model, nox/triage-agent",
+        "impact": "their findings are absent from this scan; add the ones you want to plugins.required in .nox.yaml"
+      }
+    ]
+  },
+  "findings": [
+    {
+      "ID": "CONT-001-db56b0ebd6a3",
+      "RuleID": "CONT-001",
+      "Severity": "medium",
+      "Confidence": "high",
+      "Location": {
+        "FilePath": "Dockerfile",
+        "StartLine": 1,
+        "EndLine": 1,
+        "StartColumn": 0,
+        "EndColumn": 0
+      },
+      "Message": "Container base image golang:1.25-alpine not pinned to specific digest",
+      "Fingerprint": "db56b0ebd6a34f7ec6dc6eb8da23af04cc42e6822cc44d0b7cd8ff0016df7006",
+      "Metadata": {
+        "ecosystem": "docker",
+        "image": "golang",
+        "version": "1.25-alpine"
+      }
+    },
+    {
+      "ID": "IAC-002-cac402644f7f",
+      "RuleID": "IAC-002",
+      "Severity": "medium",
+      "Confidence": "medium",
+      "Location": {
+        "FilePath": "Dockerfile",
+        "StartLine": 8,
+        "EndLine": 8,
+        "StartColumn": 1,
+        "EndColumn": 13
+      },
+      "Message": "Dockerfile uses unpinned base image (latest or no tag)",
+      "Fingerprint": "cac402644f7fb450586118797b84a217cb41e9650953530cece83e3c0a69ca9c",
+      "Metadata": {
+        "cwe": "CWE-829"
+      }
+    },
+    {
+      "ID": "IAC-018-bc549bd83bda",
+      "RuleID": "IAC-018",
+      "Severity": "low",
+      "Confidence": "medium",
+      "Location": {
+        "FilePath": ".github/workflows/ci.yml",
+        "StartLine": 82,
+        "EndLine": 82,
+        "StartColumn": 9,
+        "EndColumn": 32
+      },
+      "Message": "Workflow step suppresses failures with continue-on-error",
+      "Fingerprint": "bc549bd83bda47b0f1e5c6cb3fc9d67db65f4fbd72cdd30697bdbc6657d167bb",
+      "Metadata": {
+        "cwe": "CWE-755"
+      },
+      "RetiredRuleIDs": [
+        "IAC-310"
+      ],
+      "AliasFingerprints": [
+        "faae53eee5aab123b480b37ae6df3775272ea7eb6546c6b64ee45cf14a19b173"
+      ]
+    },
+    {
+      "ID": "IAC-018-bc549bd83bda",
+      "RuleID": "IAC-018",
+      "Severity": "low",
+      "Confidence": "medium",
+      "Location": {
+        "FilePath": ".github/workflows/ci.yml",
+        "StartLine": 122,
+        "EndLine": 122,
+        "StartColumn": 9,
+        "EndColumn": 32
+      },
+      "Message": "Workflow step suppresses failures with continue-on-error",
+      "Fingerprint": "bc549bd83bda47b0f1e5c6cb3fc9d67db65f4fbd72cdd30697bdbc6657d167bb",
+      "Metadata": {
+        "cwe": "CWE-755"
+      },
+      "RetiredRuleIDs": [
+        "IAC-310"
+      ],
+      "AliasFingerprints": [
+        "faae53eee5aab123b480b37ae6df3775272ea7eb6546c6b64ee45cf14a19b173"
+      ]
+    },
+    {
+      "ID": "IAC-018-10d644364312",
+      "RuleID": "IAC-018",
+      "Severity": "low",
+      "Confidence": "medium",
+      "Location": {
+        "FilePath": ".github/workflows/release.yml",
+        "StartLine": 49,
+        "EndLine": 49,
+        "StartColumn": 9,
+        "EndColumn": 32
+      },
+      "Message": "Workflow step suppresses failures with continue-on-error",
+      "Fingerprint": "10d6443643128fe45af051a06ddc6d2db9e72be951abec9329f264df997045dd",
+      "Metadata": {
+        "cwe": "CWE-755"
+      },
+      "RetiredRuleIDs": [
+        "IAC-310"
+      ],
+      "AliasFingerprints": [
+        "c60b7cac1b2d2561111a14b679f24958c1b2ace7396cfaf7335d7ea76f56f7ed"
+      ]
+    },
+    {
+      "ID": "IAC-121-9d590b9b2c18",
+      "RuleID": "IAC-121",
+      "Severity": "medium",
+      "Confidence": "low",
+      "Location": {
+        "FilePath": "Dockerfile",
+        "StartLine": 1,
+        "EndLine": 1,
+        "StartColumn": 1,
+        "EndColumn": 7
+      },
+      "Message": "Dockerfile missing HEALTHCHECK instruction",
+      "Fingerprint": "9d590b9b2c18c7219e248982e206843d23cb57c4d8c2a0229161c96a282dd7b4",
+      "Metadata": {
+        "cwe": "CWE-693"
+      }
+    },
+    {
+      "ID": "IAC-122-beeffc29d8d9",
+      "RuleID": "IAC-122",
+      "Severity": "medium",
+      "Confidence": "low",
+      "Location": {
+        "FilePath": "Dockerfile",
+        "StartLine": 1,
+        "EndLine": 1,
+        "StartColumn": 1,
+        "EndColumn": 7
+      },
+      "Message": "Dockerfile has no USER instruction (runs as root by default)",
+      "Fingerprint": "beeffc29d8d9b916d09d6f98d81ba8b22ca9c64299742b1390592a7c021854df",
+      "Metadata": {
+        "cwe": "CWE-250"
+      }
+    },
+    {
+      "ID": "IAC-123-3cb0974f4012",
+      "RuleID": "IAC-123",
+      "Severity": "low",
+      "Confidence": "low",
+      "Location": {
+        "FilePath": "Dockerfile",
+        "StartLine": 3,
+        "EndLine": 3,
+        "StartColumn": 1,
+        "EndColumn": 14
+      },
+      "Message": "Dockerfile COPY without --chown flag",
+      "Fingerprint": "3cb0974f40120543f0df690f71c1d81ba34e1efdd237fbd52c767033afb736b5",
+      "Metadata": {
+        "cwe": "CWE-732"
+      }
+    },
+    {
+      "ID": "IAC-123-950950a207f9",
+      "RuleID": "IAC-123",
+      "Severity": "low",
+      "Confidence": "low",
+      "Location": {
+        "FilePath": "Dockerfile",
+        "StartLine": 5,
+        "EndLine": 5,
+        "StartColumn": 1,
+        "EndColumn": 9
+      },
+      "Message": "Dockerfile COPY without --chown flag",
+      "Fingerprint": "950950a207f915771a84bc9b1baf629aa727cf38b2bfaf0cae2458a059cff5a2",
+      "Metadata": {
+        "cwe": "CWE-732"
+      }
+    },
+    {
+      "ID": "IAC-123-17fd6f4ea76a",
+      "RuleID": "IAC-123",
+      "Severity": "low",
+      "Confidence": "low",
+      "Location": {
+        "FilePath": "Dockerfile",
+        "StartLine": 9,
+        "EndLine": 9,
+        "StartColumn": 1,
+        "EndColumn": 20
+      },
+      "Message": "Dockerfile COPY without --chown flag",
+      "Fingerprint": "17fd6f4ea76ae90f76efaa5b9f5648fe1c9d279f80f35834c3780ba8b8a1b897",
+      "Metadata": {
+        "cwe": "CWE-732"
+      }
+    },
+    {
+      "ID": "IAC-124-e13c3239eacb",
+      "RuleID": "IAC-124",
+      "Severity": "low",
+      "Confidence": "low",
+      "Location": {
+        "FilePath": "Dockerfile",
+        "StartLine": 1,
+        "EndLine": 1,
+        "StartColumn": 1,
+        "EndColumn": 7
+      },
+      "Message": "Dockerfile missing LABEL maintainer",
+      "Fingerprint": "e13c3239eacb20162130bfc20e6b9ce80e1518f96ffb1a46124af723f2520484",
+      "Metadata": {
+        "cwe": "CWE-1059"
+      }
+    },
+    {
+      "ID": "IAC-153-0b616c22f622",
+      "RuleID": "IAC-153",
+      "Severity": "medium",
+      "Confidence": "low",
+      "Location": {
+        "FilePath": ".github/workflows/ci.yml",
+        "StartLine": 85,
+        "EndLine": 85,
+        "StartColumn": 15,
+        "EndColumn": 38
+      },
+      "Message": "GitHub Actions artifact upload without attestation",
+      "Fingerprint": "0b616c22f622f9f7c0305ba95cc4a06f162c81308c96e1543e312da993a54363",
+      "Metadata": {
+        "cwe": "CWE-829"
+      }
+    },
+    {
+      "ID": "IAC-153-97ad188e0785",
+      "RuleID": "IAC-153",
+      "Severity": "medium",
+      "Confidence": "low",
+      "Location": {
+        "FilePath": ".github/workflows/release.yml",
+        "StartLine": 58,
+        "EndLine": 58,
+        "StartColumn": 15,
+        "EndColumn": 38
+      },
+      "Message": "GitHub Actions artifact upload without attestation",
+      "Fingerprint": "97ad188e0785ddce4eefe6d2d1e10de2c1c850dcab14aa15399d987f5cb53c29",
+      "Metadata": {
+        "cwe": "CWE-829"
+      }
+    },
+    {
+      "ID": "IAC-306-be245a4499fe",
+      "RuleID": "IAC-306",
+      "Severity": "medium",
+      "Confidence": "high",
+      "Location": {
+        "FilePath": ".github/workflows/release.yml",
+        "StartLine": 10,
+        "EndLine": 10,
+        "StartColumn": 3,
+        "EndColumn": 18
+      },
+      "Message": "GHA workflow requests OIDC token write",
+      "Fingerprint": "be245a4499fe01a73e9664baf0ed8c855e243ef4da2b278bd541e113a9dfae2e",
+      "Metadata": {
+        "cwe": "CWE-284"
+      }
+    },
+    {
+      "ID": "IAC-308-52922952e40b",
+      "RuleID": "IAC-308",
+      "Severity": "low",
+      "Confidence": "high",
+      "Location": {
+        "FilePath": ".github/workflows/nox-remediate.yml",
+        "StartLine": 13,
+        "EndLine": 13,
+        "StartColumn": 3,
+        "EndColumn": 21
+      },
+      "Message": "GHA manual workflow dispatch enabled",
+      "Fingerprint": "52922952e40b8c5ebd4fef0969dd782d57266e9ecccc4e9bddc9be74f0f6daa2",
+      "Metadata": {
+        "cwe": "CWE-693"
+      }
+    },
+    {
+      "ID": "IAC-314-be94a773ee39",
+      "RuleID": "IAC-314",
+      "Severity": "medium",
+      "Confidence": "medium",
+      "Location": {
+        "FilePath": ".github/workflows/dependabot-auto-merge.yml",
+        "StartLine": 6,
+        "EndLine": 6,
+        "StartColumn": 3,
+        "EndColumn": 18
+      },
+      "Message": "GHA workflow has contents write permission",
+      "Fingerprint": "be94a773ee391396458b0fc3b49feb2a94bc372d2c74a25b8ebce60fcb9f4106",
+      "Metadata": {
+        "cwe": "CWE-284"
+      }
+    },
+    {
+      "ID": "IAC-314-8378df7a1d4a",
+      "RuleID": "IAC-314",
+      "Severity": "medium",
+      "Confidence": "medium",
+      "Location": {
+        "FilePath": ".github/workflows/nox-remediate.yml",
+        "StartLine": 16,
+        "EndLine": 16,
+        "StartColumn": 3,
+        "EndColumn": 18
+      },
+      "Message": "GHA workflow has contents write permission",
+      "Fingerprint": "8378df7a1d4adb5806616a668bc89e456b48fe9b7212ca5799b5b8eddbe0ae9c",
+      "Metadata": {
+        "cwe": "CWE-284"
+      }
+    },
+    {
+      "ID": "IAC-314-e37e2faa5f7d",
+      "RuleID": "IAC-314",
+      "Severity": "low",
+      "Confidence": "medium",
+      "Location": {
+        "FilePath": ".github/workflows/release.yml",
+        "StartLine": 9,
+        "EndLine": 9,
+        "StartColumn": 3,
+        "EndColumn": 18
+      },
+      "Message": "GHA workflow has contents write permission",
+      "Fingerprint": "e37e2faa5f7d812400d1323a31d22e93b710b881ea06f3b656d724454d47a8f4",
+      "Metadata": {
+        "cwe": "CWE-284",
+        "gha_context": "justified_by_consumer_action",
+        "original_severity": "medium"
+      }
+    },
+    {
+      "ID": "IAC-315-67d1566bc98d",
+      "RuleID": "IAC-315",
+      "Severity": "low",
+      "Confidence": "medium",
+      "Location": {
+        "FilePath": ".github/workflows/release.yml",
+        "StartLine": 11,
+        "EndLine": 11,
+        "StartColumn": 3,
+        "EndColumn": 18
+      },
+      "Message": "GHA workflow has packages write permission",
+      "Fingerprint": "67d1566bc98dd13ba7ce93f32980089dd18f1516c29d70443f17566e2ea4dea6",
+      "Metadata": {
+        "cwe": "CWE-284",
+        "gha_context": "justified_by_consumer_action",
+        "original_severity": "medium"
+      }
+    },
+    {
+      "ID": "SLOP-001-4b631fa5f84d",
+      "RuleID": "SLOP-001",
+      "Severity": "low",
+      "Confidence": "low",
+      "Location": {
+        "FilePath": "testdata/vuln_app.js",
+        "StartLine": 3,
+        "EndLine": 3,
+        "StartColumn": 0,
+        "EndColumn": 0
+      },
+      "Message": "Imported package \"jsonwebtoken\" is not declared in any dependency manifest, standard library, or local module — verify it exists before installing (slopsquatting risk).",
+      "Fingerprint": "4b631fa5f84db60295ec7246d931f6e082ab1c6ce5fa8c9c44a3119c057b26cf",
+      "Metadata": {
+        "context": "non-production",
+        "ecosystem": "npm",
+        "import": "jsonwebtoken",
+        "original_severity": "medium",
+        "package": "jsonwebtoken"
+      }
+    },
+    {
+      "ID": "SLOP-001-4de54d0c89ec",
+      "RuleID": "SLOP-001",
+      "Severity": "low",
+      "Confidence": "low",
+      "Location": {
+        "FilePath": "testdata/vuln_app.js",
+        "StartLine": 4,
+        "EndLine": 4,
+        "StartColumn": 0,
+        "EndColumn": 0
+      },
+      "Message": "Imported package \"helmet\" is not declared in any dependency manifest, standard library, or local module — verify it exists before installing (slopsquatting risk).",
+      "Fingerprint": "4de54d0c89ec881a86bf0305a240dd90b37fb09b04a0b86ead051ec7eb0efa06",
+      "Metadata": {
+        "context": "non-production",
+        "ecosystem": "npm",
+        "import": "helmet",
+        "original_severity": "medium",
+        "package": "helmet"
+      }
+    },
+    {
+      "ID": "SLOP-001-9e39ff815212",
+      "RuleID": "SLOP-001",
+      "Severity": "low",
+      "Confidence": "low",
+      "Location": {
+        "FilePath": "testdata/vuln_app.py",
+        "StartLine": 13,
+        "EndLine": 13,
+        "StartColumn": 0,
+        "EndColumn": 0
+      },
+      "Message": "Imported package \"flask\" is not declared in any dependency manifest, standard library, or local module — verify it exists before installing (slopsquatting risk).",
+      "Fingerprint": "9e39ff81521234af2fbf59979d442fbf2e60dcd9400bde0bf20b569fa643d478",
+      "Metadata": {
+        "context": "non-production",
+        "ecosystem": "pypi",
+        "import": "flask",
+        "original_severity": "medium",
+        "package": "flask"
+      }
+    },
+    {
+      "ID": "SLOP-001-3fb345d7e0b0",
+      "RuleID": "SLOP-001",
+      "Severity": "low",
+      "Confidence": "low",
+      "Location": {
+        "FilePath": "testdata/vuln_app.py",
+        "StartLine": 32,
+        "EndLine": 32,
+        "StartColumn": 0,
+        "EndColumn": 0
+      },
+      "Message": "Imported package \"cryptography\" is not declared in any dependency manifest, standard library, or local module — verify it exists before installing (slopsquatting risk).",
+      "Fingerprint": "3fb345d7e0b0a978afc2b7d05f4e46c48fe56a0d489c78d5123d3ed8a6effe82",
+      "Metadata": {
+        "context": "non-production",
+        "ecosystem": "pypi",
+        "import": "cryptography.fernet",
+        "original_severity": "medium",
+        "package": "cryptography"
+      }
+    },
+    {
+      "ID": "SLOP-001-312b853b5a24",
+      "RuleID": "SLOP-001",
+      "Severity": "low",
+      "Confidence": "low",
+      "Location": {
+        "FilePath": "testdata/vuln_app.py",
+        "StartLine": 33,
+        "EndLine": 33,
+        "StartColumn": 0,
+        "EndColumn": 0
+      },
+      "Message": "Imported package \"jwt\" is not declared in any dependency manifest, standard library, or local module — verify it exists before installing (slopsquatting risk).",
+      "Fingerprint": "312b853b5a2411de5300945298b7c06924ccaa81f9bc77054c880c18ac597fd8",
+      "Metadata": {
+        "context": "non-production",
+        "ecosystem": "pypi",
+        "import": "jwt",
+        "original_severity": "medium",
+        "package": "jwt"
+      }
+    },
+    {
+      "ID": "SLOP-001-f60b0e1fd030",
+      "RuleID": "SLOP-001",
+      "Severity": "low",
+      "Confidence": "low",
+      "Location": {
+        "FilePath": "testdata/vuln_app.py",
+        "StartLine": 34,
+        "EndLine": 34,
+        "StartColumn": 0,
+        "EndColumn": 0
+      },
+      "Message": "Imported package \"bcrypt\" is not declared in any dependency manifest, standard library, or local module — verify it exists before installing (slopsquatting risk).",
+      "Fingerprint": "f60b0e1fd03072e724e71ce709d8cbf23142088bced2372e627b1270003f092c",
+      "Metadata": {
+        "context": "non-production",
+        "ecosystem": "pypi",
+        "import": "bcrypt",
+        "original_severity": "medium",
+        "package": "bcrypt"
+      }
+    },
+    {
+      "ID": "SLOP-001-964982413d9b",
+      "RuleID": "SLOP-001",
+      "Severity": "low",
+      "Confidence": "low",
+      "Location": {
+        "FilePath": "testdata/vuln_app.py",
+        "StartLine": 35,
+        "EndLine": 35,
+        "StartColumn": 0,
+        "EndColumn": 0
+      },
+      "Message": "Imported package \"passlib\" is not declared in any dependency manifest, standard library, or local module — verify it exists before installing (slopsquatting risk).",
+      "Fingerprint": "964982413d9b9c9962567a91be45e11105a37593e30048aa2976ee1d002b9f33",
+      "Metadata": {
+        "context": "non-production",
+        "ecosystem": "pypi",
+        "import": "passlib",
+        "original_severity": "medium",
+        "package": "passlib"
+      }
+    }
+  ]
+}

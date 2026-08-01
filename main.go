@@ -177,6 +177,10 @@ func scanFile(resp *sdk.ResponseBuilder, filePath, ext string) error {
 	}
 	defer func() { _ = f.Close() }()
 
+	// Read once per file, not per line: the html/template judgement is about the
+	// file as a whole.
+	autoescaped := fileIsAutoescaped(filePath, ext)
+
 	scanner := bufio.NewScanner(f)
 	lineNum := 0
 	for scanner.Scan() {
@@ -190,6 +194,16 @@ func scanFile(resp *sdk.ResponseBuilder, filePath, ext string) error {
 				continue
 			}
 			if pattern.MatchString(line) {
+				// Prose about a dangerous call is not a dangerous call.
+				if isCommentLine(line, ext) {
+					continue
+				}
+				// "Missing input validation" is not true when validation is
+				// right there on the line, nor when the value's only sink is an
+				// auto-escaping template.
+				if rule.ID == "TRIAGE-002" && (isSanitized(line, ext) || autoescaped) {
+					continue
+				}
 				resp.Finding(
 					rule.ID,
 					rule.Severity,
