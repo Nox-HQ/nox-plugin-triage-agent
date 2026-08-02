@@ -1,14 +1,24 @@
+// Command nox-plugin-triage-agent prioritises the findings a nox scan already
+// produced.
+//
+// It used to run its own regex sweep over the source tree and emit TRIAGE-001..004
+// findings of its own. That was the wrong shape twice over. It duplicated
+// detection nox core already does — badly, since a handful of regexes cannot
+// match a real taint engine — and every improvement to the core scanner made the
+// duplication worse rather than better. It also meant the plugin's output had to
+// be de-duplicated against core findings that described the same code.
+//
+// The plugin now runs post-scan: nox hands it the findings, and it answers the
+// question detection cannot, which is what to look at first. Output is
+// enrichments keyed by finding fingerprint, not new findings, so triage annotates
+// the queue instead of lengthening it.
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"regexp"
-	"strings"
 
 	pluginv1 "github.com/nox-hq/nox/gen/nox/plugin/v1"
 	"github.com/nox-hq/nox/sdk"
@@ -16,224 +26,63 @@ import (
 
 var version = "dev"
 
-// triageRule defines a single triage classification rule with compiled regex patterns.
-type triageRule struct {
-	ID         string
-	Desc       string
-	Severity   pluginv1.Severity
-	Confidence pluginv1.Confidence
-	Priority   string
-	Patterns   map[string]*regexp.Regexp // extension -> compiled regex
-}
-
-// Compiled regex patterns for each triage rule.
-var rules = []triageRule{
-	{
-		ID:         "TRIAGE-001",
-		Desc:       "Critical security pattern requiring immediate review: dangerous code execution with user input",
-		Severity:   sdk.SeverityHigh,
-		Confidence: sdk.ConfidenceHigh,
-		Priority:   "immediate",
-		Patterns: map[string]*regexp.Regexp{
-			".go": regexp.MustCompile(`(?i)(exec\.Command\(.*\+|os\.Exec|syscall\.Exec)`),
-			// \b anchors eval/exec so identifiers that merely contain them as a
-			// substring — retrieval(), medieval(), upheaval() — are not flagged
-			// as dangerous code execution.
-			".py": regexp.MustCompile(`(?i)(\beval\(|\bexec\(|os\.system\(|subprocess\.call\(.*shell\s*=\s*True|__import__\()`),
-			".js": regexp.MustCompile(`(?i)(\beval\(|new\s+Function\(|child_process\.\w+\(|vm\.runInNewContext)`),
-			".ts": regexp.MustCompile(`(?i)(\beval\(|new\s+Function\(|child_process\.\w+\(|vm\.runInNewContext)`),
-		},
-	},
-	{
-		ID:         "TRIAGE-002",
-		Desc:       "High-priority pattern for scheduled review: missing input validation on external data",
-		Severity:   sdk.SeverityMedium,
-		Confidence: sdk.ConfidenceHigh,
-		Priority:   "scheduled",
-		Patterns: map[string]*regexp.Regexp{
-			".go": regexp.MustCompile(`(?i)(r\.URL\.Query\(\)\.Get\(|r\.FormValue\(|r\.Body|json\.Unmarshal\(.*req)`),
-			".py": regexp.MustCompile(`(?i)(request\.(args|form|json|data|values)\[|request\.get_json\(|flask\.request\.(args|form))`),
-			".js": regexp.MustCompile(`(?i)(req\.(body|query|params)\[|req\.(body|query|params)\.\w+)`),
-			".ts": regexp.MustCompile(`(?i)(req\.(body|query|params)\[|req\.(body|query|params)\.\w+)`),
-		},
-	},
-	{
-		ID:         "TRIAGE-003",
-		Desc:       "Low-priority hygiene pattern: deprecated API usage or security-related TODO comments",
-		Severity:   sdk.SeverityLow,
-		Confidence: sdk.ConfidenceMedium,
-		Priority:   "backlog",
-		Patterns: map[string]*regexp.Regexp{
-			".go": regexp.MustCompile(`(?i)(//\s*(TODO|FIXME|HACK|XXX)\s*.*secur|ioutil\.|crypto/md5|crypto/sha1|crypto/des)`),
-			".py": regexp.MustCompile(`(?i)(#\s*(TODO|FIXME|HACK|XXX)\s*.*secur|import\s+md5|import\s+sha\b|hashlib\.md5)`),
-			".js": regexp.MustCompile(`(?i)(//\s*(TODO|FIXME|HACK|XXX)\s*.*secur|document\.write\(|escape\(|unescape\()`),
-			".ts": regexp.MustCompile(`(?i)(//\s*(TODO|FIXME|HACK|XXX)\s*.*secur|document\.write\(|escape\(|unescape\()`),
-		},
-	},
-	{
-		ID:         "TRIAGE-004",
-		Desc:       "Informational pattern for context: security-relevant code areas for review",
-		Severity:   sdk.SeverityInfo,
-		Confidence: sdk.ConfidenceHigh,
-		Priority:   "informational",
-		Patterns: map[string]*regexp.Regexp{
-			".go": regexp.MustCompile(`(?i)(crypto\.|tls\.|x509\.|net/http\.Handle|middleware|jwt\.|bcrypt\.|oauth)`),
-			".py": regexp.MustCompile(`(?i)(cryptography\.|hashlib\.|hmac\.|ssl\.|jwt\.|bcrypt\.|passlib\.|oauth)`),
-			".js": regexp.MustCompile(`(?i)(crypto\.|jsonwebtoken|bcrypt|passport|helmet|cors|csrf|oauth)`),
-			".ts": regexp.MustCompile(`(?i)(crypto\.|jsonwebtoken|bcrypt|passport|helmet|cors|csrf|oauth)`),
-		},
-	},
-}
-
-// supportedExtensions lists file extensions that the triage scanner processes.
-var supportedExtensions = map[string]bool{
-	".go": true,
-	".py": true,
-	".js": true,
-	".ts": true,
-}
-
-// skippedDirs contains directory names to skip during recursive walks.
-var skippedDirs = map[string]bool{
-	".git":         true,
-	"vendor":       true,
-	"node_modules": true,
-	"__pycache__":  true,
-	".venv":        true,
-	"dist":         true,
-	"build":        true,
-}
-
 func buildServer() *sdk.PluginServer {
 	manifest := sdk.NewManifest("nox/triage-agent", version).
-		Capability("triage-agent", "Prioritizes and classifies code patterns for security review").
-		Tool("scan", "Scan source files to triage and prioritize security patterns for review", true).
+		Capability("triage-agent", "Prioritises findings a scan has already produced").
+		ToolWithContext("triage", "Assign a review priority to each finding from the completed scan", true).
 		Done().
 		Safety(sdk.WithRiskClass(sdk.RiskPassive)).
 		Build()
 
 	return sdk.NewPluginServer(manifest).
-		HandleTool("scan", handleScan)
+		HandleTool("triage", handleTriage)
 }
 
-func handleScan(ctx context.Context, req sdk.ToolRequest) (*pluginv1.InvokeToolResponse, error) {
-	workspaceRoot, _ := req.Input["workspace_root"].(string)
-	if workspaceRoot == "" {
-		workspaceRoot = req.WorkspaceRoot
-	}
-
+// handleTriage classifies every finding the core scan produced.
+//
+// It emits no findings at all. A triage verdict is a statement ABOUT a finding,
+// so it travels as an enrichment keyed by that finding's fingerprint; emitting a
+// parallel finding would double-count the same defect and make the count of
+// findings depend on whether triage happened to be installed.
+func handleTriage(ctx context.Context, req sdk.ToolRequest) (*pluginv1.InvokeToolResponse, error) {
+	findings := req.Findings()
 	resp := sdk.NewResponse()
 
-	if workspaceRoot == "" {
+	if len(findings) == 0 {
+		// Nothing to triage is a success, not an error: a clean scan is the
+		// outcome the whole pipeline is aiming for.
 		return resp.Build(), nil
 	}
 
-	err := filepath.WalkDir(workspaceRoot, func(path string, d os.DirEntry, err error) error {
+	// AI triage is an opt-in refinement layered ON TOP of the deterministic
+	// classification below, never a replacement for it. If the provider is
+	// unreachable or answers with nonsense, every finding still carries the
+	// rule-based priority it would have had anyway.
+	if aiTriage, _ := req.Input["ai_triage"].(bool); aiTriage {
+		provider, model, err := resolveProvider()
 		if err != nil {
-			return nil
+			markTriageError(findings, err.Error())
+		} else {
+			aiTriageFindings(ctx, provider, model, findings)
 		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if d.IsDir() {
-			if skippedDirs[d.Name()] {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		ext := filepath.Ext(path)
-		if !supportedExtensions[ext] {
-			return nil
-		}
-
-		return scanFile(resp, path, ext)
-	})
-	if err != nil && err != context.Canceled {
-		return nil, fmt.Errorf("walking workspace: %w", err)
 	}
 
-	// AI triage: opt-in LLM-assisted severity adjustment.
-	if aiTriage, _ := req.Input["ai_triage"].(bool); aiTriage {
-		built := resp.Build()
-		if len(built.GetFindings()) > 0 {
-			provider, model, err := resolveProvider()
-			if err != nil {
-				markTriageError(built.GetFindings(), err.Error())
-			} else {
-				aiTriageFindings(ctx, provider, model, built.GetFindings())
-			}
+	for _, f := range findings {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
-		return built, nil
+		p := classify(f)
+		resp.Enrichment(f.GetFingerprint(), "triage", p.title()).
+			Body(p.body(f)).
+			WithMetadata("priority", string(p.priority)).
+			WithMetadata("rank", fmt.Sprintf("%d", p.rank())).
+			WithMetadata("rationale", p.rationale).
+			WithConfidence(f.GetConfidence()).
+			Source("nox/triage-agent").
+			Done()
 	}
 
 	return resp.Build(), nil
-}
-
-func scanFile(resp *sdk.ResponseBuilder, filePath, ext string) error {
-	f, err := os.Open(filePath)
-	if err != nil {
-		return nil
-	}
-	defer func() { _ = f.Close() }()
-
-	// Read once per file, not per line: the html/template judgement is about the
-	// file as a whole.
-	autoescaped := fileIsAutoescaped(filePath, ext)
-
-	scanner := bufio.NewScanner(f)
-	lineNum := 0
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
-
-		for i := range rules {
-			rule := &rules[i]
-			pattern, ok := rule.Patterns[ext]
-			if !ok {
-				continue
-			}
-			if pattern.MatchString(line) {
-				// Prose about a dangerous call is not a dangerous call.
-				if isCommentLine(line, ext) {
-					continue
-				}
-				// "Missing input validation" is not true when validation is
-				// right there on the line, nor when the value's only sink is an
-				// auto-escaping template.
-				if rule.ID == "TRIAGE-002" && (isSanitized(line, ext) || autoescaped) {
-					continue
-				}
-				resp.Finding(
-					rule.ID,
-					rule.Severity,
-					rule.Confidence,
-					fmt.Sprintf("%s: %s", rule.Desc, strings.TrimSpace(line)),
-				).
-					At(filePath, lineNum, lineNum).
-					WithMetadata("priority", rule.Priority).
-					WithMetadata("language", extToLanguage(ext)).
-					Done()
-			}
-		}
-	}
-
-	return scanner.Err()
-}
-
-func extToLanguage(ext string) string {
-	switch ext {
-	case ".go":
-		return "go"
-	case ".py":
-		return "python"
-	case ".js":
-		return "javascript"
-	case ".ts":
-		return "typescript"
-	default:
-		return "unknown"
-	}
 }
 
 func main() {
