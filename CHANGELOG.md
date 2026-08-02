@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Breaking: the plugin prioritises findings instead of re-deriving them.**
+  It used to run its own regex sweep over the source tree and emit
+  `TRIAGE-001`–`TRIAGE-004` findings. That duplicated detection nox core already
+  does — more crudely than a real taint engine — so every improvement to the
+  core scanner made the duplication worse rather than better, and the plugin's
+  output had to be de-duplicated against core findings describing the same code.
+  Today's `0.2.3` false-positive fixes were patching a shape that should not
+  have existed.
+
+  The plugin is now a **post-scan** tool (`requires_scan_context: true`). nox
+  hands it the completed scan's findings and it answers what detection cannot:
+  what to look at first.
+
+  **Migration.** The tool is renamed `scan` → `triage`, and it takes no
+  `workspace_root`. It emits **enrichments keyed by finding fingerprint, never
+  findings** — so installing the plugin no longer changes how many findings a
+  scan reports. Anything consuming `TRIAGE-00x` findings should read
+  `metadata.priority` (or the sortable `metadata.rank`) off the enrichment
+  attached to the core finding instead.
+
+- Priority now derives from severity, the scanner's confidence, and whether the
+  code runs in production, rather than from which regex matched. A finding the
+  engine flagged with low confidence, or one located in test/fixture/example
+  code, is demoted one queue — it is still worth fixing, but it does not
+  outrank live code the scanner is sure about.
+
+### Removed
+- The `scan` tool, the four `TRIAGE-00x` regex rule families, the workspace
+  walker, and the comment/sanitizer/auto-escape guards they needed. The guards
+  existed to stop the regex sweep firing on prose and mitigated code; with no
+  sweep there is nothing for them to guard.
+
 ## [0.2.3] - 2026-08-02
 
 ### Fixed

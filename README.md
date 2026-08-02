@@ -1,173 +1,93 @@
 # nox-plugin-triage-agent
 
-**Automated security finding triage and prioritization for review workflows.**
+**Prioritises the findings a nox scan already produced.**
 
 ## Overview
 
-`nox-plugin-triage-agent` is a Nox security scanner plugin that prioritizes and classifies code patterns for security review. It categorizes findings into four priority tiers -- immediate, scheduled, backlog, and informational -- so security teams can focus their limited review bandwidth on the patterns that represent the greatest risk.
+`nox-plugin-triage-agent` runs *after* a nox scan and answers the question detection cannot: what should be looked at first. It sorts the scan's findings into four review queues — **immediate**, **scheduled**, **backlog** and **informational** — and attaches that verdict to each finding.
 
-Security scanners produce findings. Triage determines which findings matter right now. A raw `eval()` call with user input demands immediate attention. Missing input validation is important but can be scheduled. A deprecated API is backlog work. A file that imports a crypto library is informational context. This plugin applies those priority judgments automatically, transforming an undifferentiated list of findings into a prioritized review queue.
+Scanners produce findings; triage decides which ones matter right now. Severity alone does not settle it. Severity describes how bad a *class* of bug is, while the review order also depends on how sure the scanner is and on whether the code runs in production at all. A critical finding the engine flagged with low confidence, sitting in a test fixture, is not the first thing anyone should read.
 
-The plugin scans Go, Python, JavaScript, and TypeScript source files. Each finding includes a `priority` metadata field (immediate, scheduled, backlog, informational) that enables downstream tooling to route findings to appropriate review workflows. All analysis is deterministic, offline, and read-only.
+The plugin emits **enrichments keyed by finding fingerprint, never findings of its own**. A triage verdict is a statement *about* a finding, so it annotates the queue rather than lengthening it — installing this plugin does not change how many findings a scan reports.
+
+All classification is deterministic, offline and read-only. An opt-in LLM pass can refine severities on top, and is never required.
+
+> **Changed in 0.3.0.** Earlier versions ran their own regex sweep over the source tree and emitted `TRIAGE-001`–`TRIAGE-004` findings. That duplicated detection nox core already does, more crudely than a real taint engine, and every improvement to the core scanner made the duplication worse. The `scan` tool is gone; the tool is now `triage`. See [CHANGELOG.md](CHANGELOG.md) for the migration.
 
 ## Use Cases
 
-### Security Team Review Queue Management
+### Security team review queue management
 
-Your security team receives hundreds of scan findings per sprint and cannot review them all. The triage plugin classifies findings by priority so the team can focus on immediate items (dangerous code execution patterns) first, schedule reviews for medium-priority items (missing input validation), and track low-priority items (deprecated APIs) as backlog. This maximizes the security impact per hour of review time.
+A team receiving hundreds of findings per sprint cannot review them all. Triage classifies each one so the immediate queue gets attention first and the backlog stays visible without competing for it — maximising security impact per hour of review time.
 
-### Agent-Assisted Security Review
+### Agent-assisted security review
 
-Your AI agents use Nox via MCP to perform initial security assessments. The triage plugin provides structured priority metadata that agents can use to generate executive summaries ("3 immediate findings require attention, 12 scheduled items for next sprint") and create prioritized work items in your issue tracker.
+Agents using nox over MCP get structured priority metadata they can summarise ("3 immediate findings, 12 scheduled for next sprint") and turn into prioritised work items.
 
-### Developer Self-Service Security Checks
+### Developer self-service checks
 
-Your developers run security scans locally before submitting pull requests. The triage plugin helps them understand which findings to fix before merging (immediate), which to create tickets for (scheduled), and which are informational context about security-relevant code areas. This reduces back-and-forth with the security team.
+Developers scanning before a pull request can see which findings to fix before merging, which to ticket, and which are context rather than defects.
 
-### Security Posture Trending
+### Security posture trending
 
-Your CISO tracks security posture over time. The triage plugin's consistent priority classification enables trending -- tracking whether the number of immediate-priority findings is decreasing sprint over sprint, whether backlog items are being addressed, and whether new code introduces more or fewer security-relevant patterns.
+Consistent priority classification makes trending possible: whether immediate-priority findings are falling sprint over sprint, and whether the backlog is being worked.
 
-## 5-Minute Demo
+## How priorities are assigned
 
-### Prerequisites
+The baseline comes from the finding's severity and the scanner's confidence:
 
-- Go 1.25+
-- [Nox](https://github.com/Nox-HQ/nox) installed
+| Severity | Confidence | Priority |
+|---|---|---|
+| Critical | any | immediate |
+| High | high / medium | immediate |
+| High | low | scheduled |
+| Medium | high | scheduled |
+| Medium | low / medium | backlog |
+| Low | any | backlog |
+| Info | any | informational |
+| Unspecified | any | backlog |
 
-### Quick Start
+Two adjustments then apply, each moving the finding one step down the queue:
 
-1. **Install the plugin**
+- **Low confidence on an immediate finding.** The scanner is saying it might be wrong; that belongs behind the findings it is sure about.
+- **Non-production code.** Test, fixture and example code does not run in production. Still worth fixing — a vulnerable test helper misleads, and fixtures get copied — but it does not compete with live code for attention.
 
-   ```bash
-   nox plugin install Nox-HQ/nox-plugin-triage-agent
-   ```
+Non-production detection matches **whole path segments** (`testdata/`, `__tests__/`, `e2e/`, `examples/`, …) and filename conventions (`_test.go`, `.spec.ts`, `test_*.py`, `*Test.java`, …). It deliberately does not substring-match: directories named `latest`, `contest` or `attestation` contain production code, and a substring check would quietly demote real findings in them.
 
-2. **Create test files with patterns across all priority levels**
+An **unspecified** severity is treated as a gap in the rule that produced the finding, not as evidence the finding is unimportant — it lands in backlog, where it stays visible enough to be noticed.
 
-   ```bash
-   mkdir -p demo-triage && cd demo-triage
+## Output
 
-   cat > handler.py <<'EOF'
-   import hashlib
-   from flask import Flask, request
-   import jwt
-   import bcrypt
+One enrichment per finding:
 
-   app = Flask(__name__)
-
-   @app.route("/execute")
-   def run():
-       code = request.args["code"]
-       eval(code)
-
-   @app.route("/api/user")
-   def get_user():
-       user_id = request.args["id"]
-       user = db.get(user_id)
-       return user.to_json()
-
-   # TODO: add CSRF protection to payment endpoints - security issue
-   @app.route("/pay")
-   def process_payment():
-       amount = request.json["amount"]
-       return process(amount)
-
-   def hash_password(password):
-       return hashlib.md5(password.encode()).hexdigest()
-   EOF
-
-   cat > middleware.ts <<'EOF'
-   import * as crypto from "crypto";
-   import * as jwt from "jsonwebtoken";
-   import helmet from "helmet";
-   import cors from "cors";
-
-   export function authenticate(req: Request): boolean {
-       const token = req.headers["authorization"];
-       return jwt.verify(token, process.env.SECRET);
-   }
-   EOF
-   ```
-
-3. **Run the scan**
-
-   ```bash
-   nox scan --plugin nox/triage-agent demo-triage/
-   ```
-
-4. **Review findings**
-
-   ```
-   nox/triage-agent scan completed: 5 findings
-
-   TRIAGE-001 [HIGH] Critical security pattern requiring immediate review:
-       eval(code)
-     Location: demo-triage/handler.py:11
-     Confidence: high
-     Priority: immediate
-     Language: python
-
-   TRIAGE-002 [MEDIUM] High-priority pattern for scheduled review: missing input validation:
-       user_id = request.args["id"]
-     Location: demo-triage/handler.py:15
-     Confidence: high
-     Priority: scheduled
-     Language: python
-
-   TRIAGE-002 [MEDIUM] High-priority pattern for scheduled review: missing input validation:
-       amount = request.json["amount"]
-     Location: demo-triage/handler.py:22
-     Confidence: high
-     Priority: scheduled
-     Language: python
-
-   TRIAGE-003 [LOW] Low-priority hygiene pattern: deprecated API usage or security-related TODO:
-       # TODO: add CSRF protection to payment endpoints - security issue
-     Location: demo-triage/handler.py:19
-     Confidence: medium
-     Priority: backlog
-     Language: python
-
-   TRIAGE-004 [INFO] Informational pattern: security-relevant code area for review:
-       import * as crypto from "crypto";
-     Location: demo-triage/middleware.ts:1
-     Confidence: high
-     Priority: informational
-     Language: typescript
-   ```
-
-## Rules
-
-| Rule ID    | Description | Severity | Confidence | CWE | Priority |
-|------------|-------------|----------|------------|-----|----------|
-| TRIAGE-001 | Critical security pattern: dangerous code execution with user input -- `eval()`, `exec()`, `os.system()`, `subprocess.call(shell=True)`, `child_process.*`, `new Function()`, `vm.runInNewContext` | High | High | CWE-94 | immediate |
-| TRIAGE-002 | Missing input validation: external data consumed without validation -- `request.args`, `request.form`, `request.json`, `req.body`, `req.query`, `req.params`, `r.URL.Query().Get()`, `r.FormValue()` | Medium | High | CWE-20 | scheduled |
-| TRIAGE-003 | Hygiene pattern: security-related TODO/FIXME/HACK/XXX comments, deprecated APIs (`ioutil`, `md5`, `sha1`, `des`, `document.write`, `escape`, `unescape`) | Low | Medium | -- | backlog |
-| TRIAGE-004 | Informational: security-relevant code areas -- crypto libraries, TLS/x509, JWT, bcrypt, OAuth, Passport, Helmet, CORS, CSRF middleware | Info | High | -- | informational |
-
-## Supported Languages / File Types
-
-| Language | Extensions |
-|----------|-----------|
-| Go | `.go` |
-| Python | `.py` |
-| JavaScript | `.js` |
-| TypeScript | `.ts` |
+| Field | Value |
+|---|---|
+| `kind` | `triage` |
+| `finding_fingerprint` | the fingerprint of the finding being triaged |
+| `title` | `Triage: <priority>` |
+| `body` | markdown: the priority, why it was assigned, and the location |
+| `metadata.priority` | `immediate` \| `scheduled` \| `backlog` \| `informational` |
+| `metadata.rank` | `0`–`3`, most to least urgent — sortable without parsing names |
+| `metadata.rationale` | the sentence explaining the verdict |
 
 ## Configuration
 
-The plugin operates with sensible defaults and requires no configuration. It scans the entire workspace recursively, skipping `.git`, `vendor`, `node_modules`, `__pycache__`, `.venv`, `dist`, and `build` directories.
+No configuration required. The plugin receives findings from nox's post-scan phase; it does not read the source tree and takes no scan path.
 
-Pass `workspace_root` as input to override the default scan directory:
+### Optional: LLM-assisted refinement
 
-```bash
-nox scan --plugin nox/triage-agent --input workspace_root=/path/to/project
-```
+Set `ai_triage: true` to layer an LLM severity review on top of the deterministic classification. If the provider is unreachable or answers with nonsense, every finding keeps the rule-based priority it would have had anyway — the LLM can only refine, never replace.
+
+| Variable | Purpose |
+|---|---|
+| `NOX_AI_PROVIDER` | `openai`, `anthropic`, `gemini`, `ollama`, `cohere` |
+| `NOX_AI_API_KEY` | provider credential |
+| `NOX_AI_MODEL` | model name |
+| `NOX_AI_BASE_URL` | override endpoint (self-hosted, proxies) |
 
 ## Installation
 
-### Via Nox (recommended)
+### Via nox (recommended)
 
 ```bash
 nox plugin install Nox-HQ/nox-plugin-triage-agent
@@ -184,41 +104,29 @@ make build
 ## Development
 
 ```bash
-# Build the plugin binary
-make build
+make build   # build the plugin binary
+make test    # run tests with race detection
+make lint    # run the linter
+make clean   # clean build artifacts
 
-# Run tests with race detection
-make test
-
-# Run linter
-make lint
-
-# Clean build artifacts
-make clean
-
-# Build Docker image
 docker build -t nox-plugin-triage-agent .
 ```
 
 ## Architecture
 
-The plugin follows the standard Nox plugin architecture, communicating via the Nox Plugin SDK over stdio.
+The plugin speaks the nox Plugin SDK over stdio and declares a single tool, `triage`, with `requires_scan_context: true`.
 
-1. **File Discovery**: Recursively walks the workspace, filtering for supported source file extensions (`.go`, `.py`, `.js`, `.ts`).
+1. **Post-scan invocation.** nox completes its scan, then hands the plugin a `ScanContext` carrying the findings, packages and AI components it produced. The plugin never walks the workspace.
 
-2. **Priority-Tiered Pattern Matching**: Each source file is scanned line by line against four tiers of compiled regex patterns:
-   - **Tier 1 (immediate)**: Dangerous code execution patterns -- `eval()`, `exec()`, `os.system()`, `child_process`, `vm.runInNewContext` -- that represent direct code execution risk
-   - **Tier 2 (scheduled)**: Input validation gaps -- request parameter access (`req.body`, `request.args`, `r.FormValue`) without surrounding validation logic
-   - **Tier 3 (backlog)**: Code hygiene -- security-related TODO comments and deprecated API usage
-   - **Tier 4 (informational)**: Context markers -- imports of security libraries (crypto, jwt, bcrypt, helmet, cors) that indicate security-relevant code areas
+2. **Deterministic classification.** Each finding is classified from its severity, the scanner's confidence and its location, as described above. The same finding always receives the same priority.
 
-3. **Priority Metadata**: Each finding includes a `priority` metadata field set to `immediate`, `scheduled`, `backlog`, or `informational`. This enables downstream tooling (issue trackers, dashboards, agent workflows) to automatically route findings to appropriate queues.
+3. **Optional LLM refinement.** With `ai_triage: true`, an LLM pass may adjust severities; failures degrade to the deterministic result.
 
-4. **Deterministic Classification**: Priority assignment is based solely on which rule matched, not on heuristics or external data. The same code always receives the same priority classification.
+4. **Enrichment output.** Verdicts are emitted as enrichments linked to findings by fingerprint. Nothing is added to the finding set, so the scan's finding count is independent of whether triage ran.
 
 ## Contributing
 
-Contributions are welcome. Please open an issue or submit a pull request on the [GitHub repository](https://github.com/Nox-HQ/nox-plugin-triage-agent).
+Contributions welcome — open an issue or a pull request on the [GitHub repository](https://github.com/Nox-HQ/nox-plugin-triage-agent).
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/my-feature`)

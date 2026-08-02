@@ -1,7 +1,12 @@
 name: nox-plugin-triage-agent
-version: 0.2.0
+version: 0.3.0
 track: agent-assistance
-description: Automated security finding triage and prioritization for review workflows
+description: Prioritises the findings a nox scan already produced, rather than re-deriving them
 tools:
-  - name: scan
-    description: Scan source files to triage and prioritize security patterns for review
+  # Post-scan: nox hands this tool the completed scan's findings and it answers
+  # what to look at first. It emits enrichments keyed by finding fingerprint,
+  # never findings of its own — a triage verdict is a statement ABOUT a finding,
+  # and emitting a parallel finding would double-count the same defect.
+  - name: triage
+    description: Assign a review priority to each finding from the completed scan
+    requires_scan_context: true
