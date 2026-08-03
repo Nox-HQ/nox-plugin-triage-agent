@@ -4,11 +4,13 @@ go 1.26.5
 
 require (
 	github.com/nox-hq/nox v1.26.0
-	google.golang.org/grpc v1.82.1
-	google.golang.org/protobuf v1.36.11
+	google.golang.org/grpc v1.83.0
 )
 
-require go.klarlabs.de/agent v0.15.0 // indirect
+require (
+	go.klarlabs.de/agent v0.15.0 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
+)
 
 require (
 	go.klarlabs.de/agent/contrib/planner-llm v0.4.0
