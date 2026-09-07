@@ -3,7 +3,7 @@ module github.com/nox-hq/nox-plugin-triage-agent
 go 1.26.5
 
 require (
-	github.com/nox-hq/nox v1.31.0
+	github.com/nox-hq/nox v1.34.0
 	google.golang.org/grpc v1.83.2
 )
 
