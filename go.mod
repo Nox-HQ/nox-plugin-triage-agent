@@ -4,7 +4,7 @@ go 1.26.5
 
 require (
 	github.com/nox-hq/nox v1.52.0
-	google.golang.org/grpc v1.84.0
+	google.golang.org/grpc v1.85.0
 )
 
 require (
