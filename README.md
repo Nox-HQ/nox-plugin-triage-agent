@@ -1,5 +1,7 @@
 # nox-plugin-triage-agent
 
+[![nox security grade](.github/nox-badge.svg)](https://github.com/nox-hq/nox)
+
 **Prioritises the findings a nox scan already produced.**
 
 ## Overview
