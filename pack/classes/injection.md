@@ -1,0 +1,1 @@
+Class: injection. Decide whether attacker-controlled data reaches the sink without an effective sanitizer, parameterization, allow-list or encoding for that sink. Constants, validated enums and parameterized queries are safe.

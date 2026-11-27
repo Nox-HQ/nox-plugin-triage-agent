@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 
 	pluginv1 "github.com/nox-hq/nox/gen/nox/plugin/v1"
 	"github.com/nox-hq/nox/sdk"
@@ -26,12 +27,21 @@ import (
 
 var version = "dev"
 
+// aiNetworkHosts are the hosted-provider endpoints the AI pass may contact.
+var aiNetworkHosts = []string{"api.anthropic.com", "api.openai.com", "generativelanguage.googleapis.com"}
+
 func buildServer() *sdk.PluginServer {
 	manifest := sdk.NewManifest("nox/triage-agent", version).
 		Capability("triage-agent", "Prioritises findings a scan has already produced").
 		ToolWithContext("triage", "Assign a review priority to each finding from the completed scan", true).
 		Done().
-		Safety(sdk.WithRiskClass(sdk.RiskPassive)).
+		// Passive: the plugin never mutates anything and never contacts a scan
+		// target. The hosts are what the opt-in AI pass (ai_triage) may reach
+		// when it sends redacted snippets to a hosted provider; they are checked
+		// against the host policy at registration. Other providers
+		// (ollama, bedrock, cohere, a custom NOX_AI_BASE_URL) are not declared
+		// here, so nox's policy allow-list cannot vouch for them.
+		Safety(sdk.WithRiskClass(sdk.RiskPassive), sdk.WithNetworkHosts(aiNetworkHosts...)).
 		Build()
 
 	return sdk.NewPluginServer(manifest).
@@ -55,16 +65,23 @@ func handleTriage(ctx context.Context, req sdk.ToolRequest) (*pluginv1.InvokeToo
 	}
 
 	// AI triage is an opt-in refinement layered ON TOP of the deterministic
-	// classification below, never a replacement for it. If the provider is
-	// unreachable or answers with nonsense, every finding still carries the
-	// rule-based priority it would have had anyway.
-	if aiTriage, _ := req.Input["ai_triage"].(bool); aiTriage {
-		provider, model, err := resolveProvider()
-		if err != nil {
-			markTriageError(findings, err.Error())
-		} else {
-			aiTriageFindings(ctx, provider, model, findings)
+	// classification below, never a replacement for it. It only adds a second
+	// enrichment per judged finding; if it cannot run, every finding still
+	// carries the rule-based priority it would have had anyway.
+	var ai []aiVerdict
+	var j *judge
+	cfg := loadAIConfig(req.Input, os.Getenv)
+	if cfg.Enabled {
+		var diag string
+		if j, diag = newJudge(req.WorkspaceRoot, &cfg); j == nil {
+			resp.Diagnostic(pluginv1.DiagnosticSeverity_DIAGNOSTIC_SEVERITY_WARNING, diag, "nox/triage-agent")
 		}
+	}
+	if j != nil {
+		aiCtx, cancel := boundedContext(ctx, deadlineMargin)
+		ai = j.run(aiCtx, selectCandidates(findings, &cfg))
+		cancel()
+		resp.Diagnostic(pluginv1.DiagnosticSeverity_DIAGNOSTIC_SEVERITY_INFO, summarize(ai), "nox/triage-agent")
 	}
 
 	for _, f := range findings {
@@ -82,7 +99,62 @@ func handleTriage(ctx context.Context, req sdk.ToolRequest) (*pluginv1.InvokeToo
 			Done()
 	}
 
+	if j != nil {
+		emitVerdicts(resp, j, ai)
+	}
 	return resp.Build(), nil
+}
+
+// providerFactory builds the LLM provider; tests replace it to avoid the network.
+var providerFactory = resolveProvider
+
+// newJudge builds the AI judge from the environment. On failure it returns nil
+// and a diagnostic that names the problem, never a credential.
+func newJudge(workspaceRoot string, cfg *aiConfig) (j *judge, diag string) {
+	provider, model, err := providerFactory()
+	if err != nil {
+		return nil, "ai triage skipped: " + err.Error()
+	}
+	pack, err := loadPack()
+	if err != nil {
+		return nil, "ai triage skipped: " + err.Error()
+	}
+	j = &judge{provider: provider, providerName: providerName(), model: model, pack: pack, root: workspaceRoot, cfg: *cfg}
+	if cfg.UseCache {
+		if dir, derr := defaultCacheDir(); derr == nil {
+			j.cache = &verdictCache{dir: dir}
+		}
+	}
+	return j, ""
+}
+
+// emitVerdicts attaches one "ai-triage" enrichment to each judged finding. The
+// verdict is an annotation: nothing here touches a finding.
+func emitVerdicts(resp *sdk.ResponseBuilder, j *judge, verdicts []aiVerdict) {
+	for _, v := range verdicts {
+		conf := sdk.ConfidenceMedium
+		if v.verdict == verdictUncertain {
+			conf = sdk.ConfidenceLow
+		}
+		resp.Enrichment(v.fingerprint, "ai-triage", "AI triage: "+v.verdict).
+			Body(verdictBody(v)).
+			WithMetadata("ai_verdict", v.verdict).
+			WithMetadata("ai_rationale", v.rationale).
+			WithMetadata("ai_provider", j.providerName).
+			WithMetadata("ai_model", j.model).
+			WithMetadata("pack_version", j.pack.version).
+			WithMetadata("cached", strconv.FormatBool(v.cached)).
+			WithConfidence(conf).
+			Source("nox/triage-agent").
+			Done()
+	}
+}
+
+func verdictBody(v aiVerdict) string {
+	if v.rationale == "" {
+		return "AI verdict: **" + v.verdict + "** (advisory; the finding is unchanged)"
+	}
+	return "AI verdict: **" + v.verdict + "**: " + v.rationale + " (advisory; the finding is unchanged)"
 }
 
 func main() {

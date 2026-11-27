@@ -1,0 +1,1 @@
+Class: authentication and session handling. Decide whether the code lets an unauthenticated or cross-site party perform a sensitive action, or weakens a session or credential check. Consider framework-level protections visible in the snippet.

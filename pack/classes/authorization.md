@@ -1,0 +1,1 @@
+Class: authorization. Decide whether a caller can reach an object or action without a check that it is permitted to. A check that exists elsewhere is not visible here, so answer UNCERTAIN when the snippet shows no authorization decision either way.

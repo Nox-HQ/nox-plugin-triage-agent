@@ -2,208 +2,277 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
+	"regexp"
+	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	pluginv1 "github.com/nox-hq/nox/gen/nox/plugin/v1"
-	"github.com/nox-hq/nox/sdk"
 	plannerllm "go.klarlabs.de/agent/contrib/planner-llm"
+	"go.klarlabs.de/agent/contrib/planner-llm/providers"
 )
 
-const triageSystemPrompt = `You are a security triage assistant. You analyze code security findings and provide contextual severity adjustments.
+// AI triage is a verdict ABOUT a finding. It never changes a finding's severity
+// or confidence, never drops a finding, and never creates one: its only output
+// is an enrichment keyed by the finding's fingerprint. A model that invents a
+// file or line in its reply cannot move a finding, because the location is read
+// from the input finding, never from the reply.
 
-For each finding, you must:
-1. Review the rule ID, current severity, and code context
-2. Assess whether the severity should be kept, raised, or lowered
-3. Classify the finding as "true_positive", "false_positive", or "needs_review"
-4. Provide a brief reason for your assessment
+// Verdict values carried in the ai_verdict metadata field.
+const (
+	verdictTruePositive  = "true_positive"
+	verdictFalsePositive = "false_positive"
+	verdictUncertain     = "uncertain"
+)
 
-Respond ONLY with a JSON array. Each element must have these fields:
-- "rule_id": string (the original rule ID)
-- "file": string (the file path)
-- "line": integer (the line number)
-- "adjusted_severity": string (one of: "critical", "high", "medium", "low", "info")
-- "adjusted_priority": string (one of: "immediate", "scheduled", "backlog", "informational")
-- "classification": string (one of: "true_positive", "false_positive", "needs_review")
-- "reason": string (brief explanation)
+const maxRationaleRunes = 280
 
-Do not include any text outside the JSON array.`
+// Error classes reported in place of provider error text, which can carry a
+// response body.
+const (
+	errClassTimeout     = "timeout"
+	errClassRateLimited = "rate_limited"
+	errClassAuth        = "auth"
+	errClassConnection  = "connection"
+	errClassBudget      = "budget_exhausted"
+	errClassProvider    = "provider_error"
+)
 
-// triageAdjustment represents a single LLM-suggested adjustment to a finding.
-type triageAdjustment struct {
-	RuleID           string `json:"rule_id"`
-	File             string `json:"file"`
-	Line             int    `json:"line"`
-	AdjustedSeverity string `json:"adjusted_severity"`
-	AdjustedPriority string `json:"adjusted_priority"`
-	Classification   string `json:"classification"`
-	Reason           string `json:"reason"`
+func validVerdict(v string) bool {
+	switch v {
+	case verdictTruePositive, verdictFalsePositive, verdictUncertain:
+		return true
+	}
+	return false
 }
 
-// aiTriageFindings sends findings to an LLM for contextual severity adjustment.
-// On any error, findings are returned unchanged with ai_triage_error metadata.
-func aiTriageFindings(ctx context.Context, provider plannerllm.Provider, model string, findings []*pluginv1.Finding) {
-	if len(findings) == 0 {
-		return
+// aiVerdict is one judged finding.
+type aiVerdict struct {
+	fingerprint string
+	verdict     string
+	rationale   string
+	cached      bool
+}
+
+// judge holds everything one triage run needs. The provider is injected so
+// tests run without a network.
+type judge struct {
+	provider     plannerllm.Provider
+	providerName string
+	model        string
+	cache        *verdictCache
+	pack         *triagePack
+	root         string
+	cfg          aiConfig
+}
+
+// selectCandidates dedupes, gates and orders the findings to judge. The most
+// urgent come first so a cap or a deadline drops the least important ones, and
+// the order is deterministic.
+func selectCandidates(findings []*pluginv1.Finding, cfg *aiConfig) []*pluginv1.Finding {
+	var out []*pluginv1.Finding
+	for _, f := range dedupeFindings(findings) {
+		if f.GetFingerprint() != "" && shouldTriage(f, cfg.Gates) {
+			out = append(out, f)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return classify(out[i]).rank() < classify(out[j]).rank()
+	})
+	if cfg.MaxFindings > 0 && len(out) > cfg.MaxFindings {
+		out = out[:cfg.MaxFindings]
+	}
+	return out
+}
+
+// run judges every candidate with bounded concurrency and returns one verdict
+// per candidate, in candidate order. It never returns an error: a failure on one
+// finding is that finding's uncertain verdict.
+func (j *judge) run(ctx context.Context, candidates []*pluginv1.Finding) []aiVerdict {
+	verdicts := make([]aiVerdict, len(candidates))
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	workers := max(1, min(j.cfg.Concurrency, len(candidates)))
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				verdicts[i] = j.judgeOne(ctx, candidates[i])
+			}
+		}()
+	}
+	for i := range candidates {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	return verdicts
+}
+
+func uncertain(f *pluginv1.Finding, why string) aiVerdict {
+	return aiVerdict{fingerprint: f.GetFingerprint(), verdict: verdictUncertain, rationale: why}
+}
+
+// judgeOne judges a single finding: read a confined snippet, redact it, answer
+// from the cache or ask the model, and cache a parsed answer.
+func (j *judge) judgeOne(ctx context.Context, f *pluginv1.Finding) aiVerdict {
+	if ctx.Err() != nil {
+		return uncertain(f, "no verdict: "+errClassBudget)
+	}
+	text, err := j.redactedSnippet(f)
+	if err != nil {
+		return uncertain(f, "no verdict: source snippet unavailable ("+snippetErrClass(err)+")")
+	}
+	key := cacheKey(f.GetFingerprint(), text, j.pack.version, j.providerName, j.model)
+	if hit, ok := j.cache.get(key); ok {
+		return aiVerdict{fingerprint: f.GetFingerprint(), verdict: hit.Verdict, rationale: hit.Rationale, cached: true}
 	}
 
-	userMsg := buildTriagePrompt(findings)
-
-	resp, err := provider.Complete(ctx, plannerllm.CompletionRequest{
-		Model: model,
+	callCtx, cancel := context.WithTimeout(ctx, j.cfg.Timeout)
+	defer cancel()
+	resp, err := j.provider.Complete(callCtx, plannerllm.CompletionRequest{
+		Model: j.model,
 		Messages: []plannerllm.Message{
-			{Role: "system", Content: triageSystemPrompt},
-			{Role: "user", Content: userMsg},
+			{Role: "system", Content: j.pack.systemPrompt(classForFinding(f))},
+			{Role: "user", Content: userPrompt(f, redactText(f.GetMessage()), text)},
 		},
-		Temperature: 0.2,
-		MaxTokens:   4096,
+		MaxTokens: 300,
 	})
 	if err != nil {
-		log.Printf("ai_triage: LLM call failed: %v", err)
-		markTriageError(findings, fmt.Sprintf("LLM call failed: %v", err))
-		return
+		return uncertain(f, "no verdict: provider call failed ("+providerErrClass(err)+")")
 	}
+	verdict, rationale := parseVerdict(resp.Message.Content)
+	// A cache write failure costs a repeat call next run, nothing more.
+	_ = j.cache.put(key, cachedVerdict{Verdict: verdict, Rationale: rationale})
+	return aiVerdict{fingerprint: f.GetFingerprint(), verdict: verdict, rationale: rationale}
+}
 
-	adjustments, err := parseTriageResponse(resp.Message.Content)
+// redactedSnippet reads the finding's window from the workspace and returns it
+// redacted and size-capped, ready to leave the process.
+func (j *judge) redactedSnippet(f *pluginv1.Finding) (string, error) {
+	loc := f.GetLocation()
+	s, err := readSnippet(j.root, loc.GetFilePath(), int(loc.GetStartLine()), snippetRadius)
 	if err != nil {
-		log.Printf("ai_triage: failed to parse LLM response: %v", err)
-		markTriageError(findings, fmt.Sprintf("failed to parse LLM response: %v", err))
-		return
+		return "", err
 	}
-
-	applyAdjustments(findings, adjustments)
+	if end := int(loc.GetEndLine()); end > int(loc.GetStartLine()) {
+		s.focusRange(int(loc.GetStartLine()), end)
+	}
+	redacted := redactSnippet(s.lines, s.focus, isSecretRule(f.GetRuleId()))
+	return capSnippet(redacted, int(loc.GetStartLine())-s.first, snippetMaxBytes), nil
 }
 
-// buildTriagePrompt serializes findings into a user message for the LLM.
-func buildTriagePrompt(findings []*pluginv1.Finding) string {
-	type findingSummary struct {
-		RuleID   string `json:"rule_id"`
-		Severity string `json:"severity"`
-		File     string `json:"file"`
-		Line     int32  `json:"line"`
-		Message  string `json:"message"`
-		Priority string `json:"priority"`
-	}
-
-	summaries := make([]findingSummary, len(findings))
-	for i, f := range findings {
-		file := ""
-		var line int32
-		if f.GetLocation() != nil {
-			file = f.GetLocation().GetFilePath()
-			line = f.GetLocation().GetStartLine()
-		}
-		priority := ""
-		if f.GetMetadata() != nil {
-			priority = f.GetMetadata()["priority"]
-		}
-		summaries[i] = findingSummary{
-			RuleID:   f.GetRuleId(),
-			Severity: f.GetSeverity().String(),
-			File:     file,
-			Line:     line,
-			Message:  f.GetMessage(),
-			Priority: priority,
-		}
-	}
-
-	data, _ := json.MarshalIndent(summaries, "", "  ")
-	return fmt.Sprintf("Please triage the following %d security findings:\n\n%s", len(findings), string(data))
-}
-
-// parseTriageResponse extracts triage adjustments from the LLM response content.
-func parseTriageResponse(content string) ([]triageAdjustment, error) {
-	content = strings.TrimSpace(content)
-
-	// Strip markdown code fences if present.
-	if strings.HasPrefix(content, "```") {
-		lines := strings.Split(content, "\n")
-		if len(lines) >= 2 {
-			lines = lines[1:]
-		}
-		if len(lines) > 0 && strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "```") {
-			lines = lines[:len(lines)-1]
-		}
-		content = strings.Join(lines, "\n")
-	}
-
-	var adjustments []triageAdjustment
-	if err := json.Unmarshal([]byte(content), &adjustments); err != nil {
-		return nil, fmt.Errorf("invalid JSON in LLM response: %w", err)
-	}
-	return adjustments, nil
-}
-
-// applyAdjustments modifies findings in-place based on LLM suggestions.
-func applyAdjustments(findings []*pluginv1.Finding, adjustments []triageAdjustment) {
-	// Build lookup: (rule_id, file, line) -> adjustment
-	type key struct {
-		ruleID string
-		file   string
-		line   int32
-	}
-	lookup := make(map[key]triageAdjustment, len(adjustments))
-	for _, a := range adjustments {
-		lookup[key{a.RuleID, a.File, int32(a.Line)}] = a
-	}
-
-	for _, f := range findings {
-		file := ""
-		var line int32
-		if f.GetLocation() != nil {
-			file = f.GetLocation().GetFilePath()
-			line = f.GetLocation().GetStartLine()
-		}
-
-		adj, ok := lookup[key{f.GetRuleId(), file, line}]
-		if !ok {
-			continue
-		}
-
-		if f.Metadata == nil {
-			f.Metadata = make(map[string]string)
-		}
-		f.Metadata["ai_triaged"] = "true"
-		f.Metadata["ai_classification"] = adj.Classification
-		f.Metadata["ai_triage_reason"] = adj.Reason
-
-		if sev := parseSeverity(adj.AdjustedSeverity); sev != pluginv1.Severity(0) {
-			f.Metadata["ai_original_severity"] = f.GetSeverity().String()
-			f.Severity = sev
-		}
-		if adj.AdjustedPriority != "" {
-			f.Metadata["ai_original_priority"] = f.Metadata["priority"]
-			f.Metadata["priority"] = adj.AdjustedPriority
-		}
-	}
-}
-
-// markTriageError adds ai_triage_error metadata to all findings when LLM triage fails.
-func markTriageError(findings []*pluginv1.Finding, errMsg string) {
-	for _, f := range findings {
-		if f.Metadata == nil {
-			f.Metadata = make(map[string]string)
-		}
-		f.Metadata["ai_triage_error"] = errMsg
-	}
-}
-
-// parseSeverity converts a severity string to the protobuf enum value.
-func parseSeverity(s string) pluginv1.Severity {
-	switch strings.ToLower(s) {
-	case "critical":
-		return sdk.SeverityCritical
-	case "high":
-		return sdk.SeverityHigh
-	case "medium":
-		return sdk.SeverityMedium
-	case "low":
-		return sdk.SeverityLow
-	case "info":
-		return sdk.SeverityInfo
+func snippetErrClass(err error) string {
+	switch {
+	case errors.Is(err, errOutsideWorkspace):
+		return "outside_workspace"
+	case errors.Is(err, errNoWorkspace):
+		return "no_workspace"
 	default:
-		return pluginv1.Severity(0)
+		return "unreadable"
 	}
+}
+
+var httpStatus = regexp.MustCompile(`status (\d{3})`)
+
+// providerErrClass reduces a provider error to a class. The raw text is never
+// used: provider errors can embed the response body.
+func providerErrClass(err error) string {
+	switch {
+	case errors.Is(err, providers.ErrMissingAPIKey):
+		return errClassAuth
+	case errors.Is(err, providers.ErrRateLimited):
+		return errClassRateLimited
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, providers.ErrContextCanceled), errors.Is(err, context.Canceled):
+		return errClassTimeout
+	case errors.Is(err, providers.ErrConnectionFailed):
+		return errClassConnection
+	}
+	if m := httpStatus.FindStringSubmatch(err.Error()); m != nil {
+		return "http_" + m[1]
+	}
+	return errClassProvider
+}
+
+// parseVerdict reads the verdict from the FIRST non-empty line of the reply and
+// the rationale from the line after it. It never reads a location from the
+// reply. A reply that names no verdict, or more than one, is uncertain: an
+// unexpected shape must not become a confident label.
+func parseVerdict(reply string) (verdict, rationale string) {
+	lines := nonEmptyLines(reply)
+	if len(lines) == 0 {
+		return verdictUncertain, ""
+	}
+	verdict = verdictFromLine(lines[0])
+	if len(lines) > 1 {
+		rationale = shorten(lines[1])
+	}
+	return verdict, rationale
+}
+
+func verdictFromLine(line string) string {
+	norm := strings.ToUpper(strings.NewReplacer("*", "", "`", "", " ", "_", "-", "_").Replace(line))
+	tp := strings.Contains(norm, "TRUE_POSITIVE")
+	fp := strings.Contains(norm, "FALSE_POSITIVE")
+	switch {
+	case tp && !fp:
+		return verdictTruePositive
+	case fp && !tp:
+		return verdictFalsePositive
+	default:
+		return verdictUncertain
+	}
+}
+
+func nonEmptyLines(s string) []string {
+	var out []string
+	for _, l := range strings.Split(s, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func shorten(s string) string {
+	r := []rune(strings.TrimSpace(s))
+	if len(r) > maxRationaleRunes {
+		return string(r[:maxRationaleRunes]) + "..."
+	}
+	return string(r)
+}
+
+// boundedContext returns a context for the whole AI phase. The host cancels a
+// tool call at the plugin's invocation timeout; if that deadline arrives first
+// the deterministic enrichments are lost too, so the AI phase stops a margin
+// earlier and leaves time to answer.
+func boundedContext(ctx context.Context, margin time.Duration) (context.Context, context.CancelFunc) {
+	if dl, ok := ctx.Deadline(); ok {
+		return context.WithDeadline(ctx, dl.Add(-margin))
+	}
+	return ctx, func() {}
+}
+
+// summarize renders a one-line diagnostic of the AI pass.
+func summarize(verdicts []aiVerdict) string {
+	var tp, fp, unc, cached int
+	for _, v := range verdicts {
+		switch v.verdict {
+		case verdictTruePositive:
+			tp++
+		case verdictFalsePositive:
+			fp++
+		default:
+			unc++
+		}
+		if v.cached {
+			cached++
+		}
+	}
+	return fmt.Sprintf("ai triage: %d judged (%d from cache): %d true_positive, %d false_positive, %d uncertain",
+		len(verdicts), cached, tp, fp, unc)
 }
