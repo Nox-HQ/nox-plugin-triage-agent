@@ -1,7 +1,7 @@
 name: nox-plugin-triage-agent
 version: 0.3.0
 track: agent-assistance
-description: Prioritises the findings a nox scan already produced, rather than re-deriving them
+description: Prioritises the findings a nox scan already produced, and can optionally ask an LLM to judge each one against its source
 tools:
   # Post-scan: nox hands this tool the completed scan's findings and it answers
   # what to look at first. It emits enrichments keyed by finding fingerprint,
@@ -10,3 +10,13 @@ tools:
   - name: triage
     description: Assign a review priority to each finding from the completed scan
     requires_scan_context: true
+
+# Opt-in AI pass (NOX_AI_TRIAGE=true or the ai_triage input). When enabled, a
+# bounded, secret-redacted snippet of source around each judged finding is sent
+# to the provider named by NOX_AI_PROVIDER. Off by default; nothing leaves the
+# machine otherwise. Verdicts are enrichments (kind "ai-triage"); findings and
+# their severity are never changed.
+#
+# Safety (risk class passive, network hosts api.anthropic.com, api.openai.com,
+# generativelanguage.googleapis.com) is declared by the binary through the SDK
+# manifest, not in this file; plugin.yaml has no safety schema.
