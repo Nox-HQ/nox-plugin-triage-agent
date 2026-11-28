@@ -1,0 +1,1 @@
+Class: information exposure. Decide whether sensitive data (credentials, personal data, internals) reaches a log, response or error visible to someone who should not see it. Debug-only or redacted output is not exposure.

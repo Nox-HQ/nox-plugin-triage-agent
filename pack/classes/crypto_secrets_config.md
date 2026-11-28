@@ -1,0 +1,1 @@
+Class: cryptography, secrets and configuration. A hard-coded value is a true positive only if it is a real credential or key, not a placeholder, test value, example or public identifier. A weak algorithm is a true positive only when it protects something that matters (passwords, signatures, confidentiality), not a checksum or cache key.

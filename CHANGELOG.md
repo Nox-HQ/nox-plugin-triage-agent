@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **AI triage judges one finding at a time, with the code.** The opt-in AI pass
+  used to send every finding in a single prompt with no source and could rewrite
+  a finding's severity and priority. Each judged finding now gets its own prompt
+  carrying the rule, CWE, message, location and a bounded snippet (about 20 lines
+  either side, capped at 6 KiB). This absorbs the judging approach of
+  `nox-plugin-llm-triage`, which nox never invoked and which is being archived.
+- **Verdicts are annotations only.** The severity and priority mutation in
+  `applyAdjustments` is removed. An AI verdict is a second enrichment
+  (`kind: ai-triage`) with `ai_verdict` (`true_positive` | `false_positive` |
+  `uncertain`), `ai_rationale`, `ai_provider`, `ai_model`, `pack_version` and
+  `cached`. Findings are never changed, dropped or added. The deterministic
+  `triage` enrichment is unchanged. **Migration:** anything reading
+  `ai_classification`, `ai_triage_reason`, `ai_original_severity` or
+  `ai_triage_error` should read the `ai-triage` enrichment instead.
+- Default Anthropic model is now `claude-sonnet-5-5` (was
+  `claude-sonnet-4-5-20250514`). Other providers' defaults are unchanged.
+
+### Added
+- **Secret redaction before egress.** Snippets for `SEC-*` findings have the
+  matched line's literals and values masked; every snippet has token shapes
+  (AWS, GitHub, Slack, `sk-`, JWT, bearer, URL credentials, PEM private keys) and
+  long high-entropy quoted strings masked.
+- **Workspace-confined snippet reads.** Absolute paths, `..` escapes and symlinks
+  resolving outside the workspace root are rejected; such findings are not sent.
+- **Deterministic verdict cache** under `os.UserCacheDir()/nox/triage-agent/`,
+  keyed by fingerprint, redacted-snippet hash, pack version, provider and model.
+  `ai_cache: false` disables it.
+- **Versioned triage pack** (`pack/`, `v0.1.0`) embedded in the binary: base
+  prompt, per-class instructions selected by CWE, and an empty `examples/` hook.
+- **Bounds:** `ai_max_findings` (200), `ai_concurrency` (4), `ai_timeout` (60 s
+  per call), and the AI phase stops 10 s before the host's invocation deadline so
+  the deterministic enrichments are still returned. A provider error becomes
+  `ai_verdict=uncertain` with an error class, never the provider's response text
+  or the API key.
+- Every AI setting can also come from `NOX_AI_TRIAGE`, `NOX_AI_CACHE`,
+  `NOX_AI_MAX_FINDINGS`, `NOX_AI_CONCURRENCY` and `NOX_AI_TIMEOUT`, because
+  nox's post-scan host passes no tool input.
+- The manifest declares the hosted-provider hosts the AI pass may contact.
+
+### Security
+- Opting in sends redacted source snippets to the configured provider. nox's
+  `--offline` does not stop this; see the README.
+
 ## [0.3.0] - 2026-08-02
 
 ### Changed

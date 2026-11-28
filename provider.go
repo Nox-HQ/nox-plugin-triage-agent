@@ -9,19 +9,24 @@ import (
 	"go.klarlabs.de/agent/contrib/planner-llm/providers"
 )
 
+// providerName returns the configured provider, defaulting to openai.
+func providerName() string {
+	if n := strings.ToLower(os.Getenv("NOX_AI_PROVIDER")); n != "" {
+		return n
+	}
+	return "openai"
+}
+
 // resolveProvider creates an LLM provider from NOX_AI_* environment variables.
 // Returns an error if the required API key is not set.
 func resolveProvider() (plannerllm.Provider, string, error) {
-	providerName := strings.ToLower(os.Getenv("NOX_AI_PROVIDER"))
-	if providerName == "" {
-		providerName = "openai"
-	}
+	name := providerName()
 
 	apiKey := os.Getenv("NOX_AI_API_KEY")
 	model := os.Getenv("NOX_AI_MODEL")
 	baseURL := os.Getenv("NOX_AI_BASE_URL")
 
-	switch providerName {
+	switch name {
 	case "openai":
 		if apiKey == "" {
 			return nil, "", fmt.Errorf("NOX_AI_API_KEY is required for openai provider")
@@ -41,7 +46,7 @@ func resolveProvider() (plannerllm.Provider, string, error) {
 			return nil, "", fmt.Errorf("NOX_AI_API_KEY is required for anthropic provider")
 		}
 		if model == "" {
-			model = "claude-sonnet-4-5-20250514"
+			model = "claude-sonnet-5-5"
 		}
 		p := providers.NewAnthropicProvider(providers.AnthropicConfig{
 			APIKey:  apiKey,
@@ -130,6 +135,6 @@ func resolveProvider() (plannerllm.Provider, string, error) {
 		return p, model, nil
 
 	default:
-		return nil, "", fmt.Errorf("unsupported provider: %s (supported: openai, anthropic, gemini, ollama, cohere, bedrock, copilot)", providerName)
+		return nil, "", fmt.Errorf("unsupported provider: %s (supported: openai, anthropic, gemini, ollama, cohere, bedrock, copilot)", name)
 	}
 }
