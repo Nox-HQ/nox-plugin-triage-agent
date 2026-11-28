@@ -117,6 +117,18 @@ func TestRedactText_LeavesOrdinaryCodeAlone(t *testing.T) {
 		`const message = "the quick brown fox jumps over the lazy dog"`,
 		`return fmt.Sprintf("%s:%d", host, port)`,
 		`longIdentifierNameThatIsJustCamelCaseWithoutDigits := 1`,
+		// What a triage verdict depends on must survive: sinks, sources,
+		// routes, annotations and module paths, including ones with digits.
+		`rows, err := db.Query("SELECT * FROM users WHERE id = " + r.URL.Query().Get("id"))`,
+		`@GetMapping("/api/v2/accounts/{accountId}/transactions")`,
+		`import "github.com/nox-hq/nox-core/evidence/v2"`,
+		`handler := "processPaymentRequestHandlerV2"`,
+		`lookup := "findUserIDByEmailAddressV2"`,
+		`codec := "base64EncodeResponseBody"`,
+		`cfg.Set("user_profile_settings_cache_ttl_2", 300)`,
+		`@PreAuthorize("hasRole('ADMIN') and #userId == authentication.principal.id")`,
+		`app.post('/users/:id/reset-password', requireAuth, resetPassword)`,
+		`subprocess.run(["git", "clone", repo_url], check=True)`,
 	}
 	for _, line := range code {
 		if got := redactText(line); got != line {
@@ -177,6 +189,60 @@ func TestIsSecretRule(t *testing.T) {
 	for id, want := range map[string]bool{"SEC-001": true, "SEC-661": true, "TAINT-014": false, "": false, "xSEC-1": false} {
 		if got := isSecretRule(id); got != want {
 			t.Errorf("isSecretRule(%q) = %v, want %v", id, got, want)
+		}
+	}
+}
+
+// TestRedactText_RandomQuotedTokensStayMasked falsifies the identifier
+// exemption in looksHighEntropy: seeded random base62 tokens of credential
+// length, in every alphabet mix a generator uses, must all still be masked.
+func TestRedactText_RandomQuotedTokensStayMasked(t *testing.T) {
+	alphabets := []string{
+		"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+		"abcdefghijklmnopqrstuvwxyz0123456789",
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+		"0123456789abcdef",
+		"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-",
+	}
+	r := rand.New(rand.NewSource(20261128))
+	for _, alphabet := range alphabets {
+		for i := 0; i < 2000; i++ {
+			n := 24 + r.Intn(41)
+			b := make([]byte, n)
+			for j := range b {
+				b[j] = alphabet[r.Intn(len(alphabet))]
+			}
+			tok := string(b)
+			if !strings.ContainsAny(tok, "0123456789") || strings.Trim(tok, "0123456789_-") == "" {
+				continue // no letters or no digits: not what the entropy pass targets
+			}
+			line := `key := "` + tok + `"`
+			if got := redactText(line); !strings.Contains(got, redactedMark) {
+				t.Fatalf("random token survived redaction: %q", tok)
+			}
+		}
+	}
+}
+
+// TestRedactText_WitnessTokensStayMasked pins random tokens that a 1.6M-token
+// seeded probe found leaking through one guard of looksHighEntropy each, so
+// removing any guard fails here even when the smaller seeded sample misses it.
+func TestRedactText_WitnessTokensStayMasked(t *testing.T) {
+	witnesses := map[string]string{
+		"camelCase word shape":   "bRouSgOOusCpkovkkdeZc49XAKfbepNvPZrhlVRSXdqpINAME9Fri",
+		"word length":            "zasw43kgbhnefbaavhrokyhrbrmo4iz",
+		"digit inside a word":    "tvusryp5mxgbw5542sdegddc",
+		"capitals against digit": "UXEX73THMSIAOZXSZYTQUNZQEN6I",
+		"hex":                    "f4253a7e32c4e9fe9073c401",
+		"short-part cap":         "gjaHvhOedpmxkNZGATWPIEihXj0U42Lwxj",
+		"digit-part cap":         "RFYIZ1BSXAI4BBZK5ADP6ZDRL6",
+		"vowelless part":         "QshhiweeymUvCmzjRvnb3Y86xIuvPizYHPY",
+		"average word length":    "lTjyBANZuro8L93NgZeqBjohUAFQ",
+		"entropy floor":          "NVDPOLYSSSONDDID3SDPOM22H8PS",
+	}
+	for guard, tok := range witnesses {
+		if got := redactText(`key := "` + tok + `"`); !strings.Contains(got, redactedMark) {
+			t.Errorf("%s: token survived redaction: %q", guard, tok)
 		}
 	}
 }

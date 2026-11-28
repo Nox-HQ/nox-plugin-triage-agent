@@ -49,7 +49,11 @@ var (
 	longToken  = regexp.MustCompile(`[A-Za-z0-9+/=_-]{20,}`)
 )
 
-const minEntropyBitsPerChar = 3.5
+// minEntropyBitsPerChar is the floor for a quoted token to count as random. A
+// 24-character token from a 36-symbol alphabet lands near 3.5 often enough
+// that 3.5 let about 1 in 4,000 through; strings that read as identifiers are
+// exempted before this test, so a lower floor costs little benign context.
+const minEntropyBitsPerChar = 3.25
 
 // redactText masks credential shapes in free text (a message). It does not
 // know which line a finding is on.
@@ -139,7 +143,122 @@ func looksHighEntropy(s string) bool {
 			hasLetter = true
 		}
 	}
-	return hasDigit && hasLetter && shannonEntropy(s) >= minEntropyBitsPerChar
+	if !hasDigit || !hasLetter {
+		return false
+	}
+	// Hex carries at most 4 bits a character, so a 24-character hex key often
+	// falls under the entropy threshold. Mixed hex of credential length is
+	// masked outright; a commit hash or checksum goes with it.
+	if hexToken.MatchString(s) {
+		return true
+	}
+	return !looksIdentifier(s) && shannonEntropy(s) >= minEntropyBitsPerChar
+}
+
+var hexToken = regexp.MustCompile(`^(?:[0-9a-f]+|[0-9A-F]+)$`)
+
+// identifierShape is a name built from word parts: letters and digits joined by
+// '_', '-' or '.', starting with a letter. Base64 characters ('+', '/', '=')
+// rule it out.
+var identifierShape = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*(?:[_.-][A-Za-z0-9]+)*$`)
+
+// looksIdentifier reports whether s reads as a name a person wrote, such as
+// processPaymentRequestHandlerV2 or user_profile_settings_cache_ttl_2, rather
+// than a generated token. Split into camelCase words (each lower, Capitalised
+// or an ACRONYM, by construction of identifierParts), a name is words mostly
+// three letters or
+// longer (ID, By and V in findUserIDByEmailAddressV2 are the most it has), plus
+// at most a couple of short numbers. A random token breaks into many one- and
+// two-letter fragments.
+func looksIdentifier(s string) bool {
+	if !identifierShape.MatchString(s) || digitInsideWord.MatchString(s) || capsAgainstDigit.MatchString(s) {
+		return false
+	}
+	var words, short, digitParts, letters int
+	for _, part := range identifierParts(s) {
+		if part[0] >= '0' && part[0] <= '9' {
+			digitParts++
+			continue
+		}
+		if !wordLike(part) {
+			return false
+		}
+		words++
+		letters += len(part)
+		if len(part) <= 2 || !hasVowel(part) {
+			short++ // fragments, and vowelless runs such as ctx or a random "Gsml"
+		}
+	}
+	// Names average 3.6 letters a word or more (findUserIDByEmailAddressV2 is
+	// the low end); random mixed case fragments to about 2.8.
+	return words > 0 && digitParts <= 2 && short <= 3 && 2*letters >= 7*words
+}
+
+// digitInsideWord is a number with a lowercase letter on both sides. In a name
+// a number ends a word (V2, ttl_2, base64Encode); inside a word it is a token.
+var digitInsideWord = regexp.MustCompile(`[a-z]\d+[a-z]`)
+
+// capsAgainstDigit is six or more capitals touching a number. An acronym next to
+// a number is short (V2, SHA256, HTTP2); a long capital run there is a token.
+var capsAgainstDigit = regexp.MustCompile(`\d[A-Z]{6,}|[A-Z]{6,}\d`)
+
+// wordLike rejects letter runs no one writes: longer than any word, or long and
+// short of vowels (written words are about two-fifths vowels, random letters
+// under a fifth). It errs toward masking, so a rare consonant-heavy word such
+// as "strengths" next to a digit is masked; that costs the model context, not
+// a disclosure.
+func wordLike(w string) bool {
+	if len(w) > 20 {
+		return false
+	}
+	if len(w) < 5 {
+		return true // abbreviations: ttl, ctx, cfg, src
+	}
+	vowels := 0
+	for _, r := range strings.ToLower(w) {
+		if strings.ContainsRune("aeiouy", r) {
+			vowels++
+		}
+	}
+	return vowels*4 >= len(w)
+}
+
+func hasVowel(w string) bool {
+	return strings.ContainsAny(strings.ToLower(w), "aeiouy")
+}
+
+// identifierParts splits s at '_', '-', '.', at a lower-to-upper case change
+// and at every letter/digit boundary.
+func identifierParts(s string) []string {
+	var parts []string
+	start := 0
+	isDigit := func(c byte) bool { return c >= '0' && c <= '9' }
+	isLower := func(c byte) bool { return c >= 'a' && c <= 'z' }
+	isUpper := func(c byte) bool { return c >= 'A' && c <= 'Z' }
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '_' || c == '-' || c == '.' {
+			if i > start {
+				parts = append(parts, s[start:i])
+			}
+			start = i + 1
+			continue
+		}
+		if i > start {
+			p := s[i-1]
+			// The acronym rule splits "IDFor" before the F: an upper run
+			// followed by a lower letter ends one letter early.
+			acronymEnd := isUpper(p) && isUpper(c) && i+1 < len(s) && isLower(s[i+1])
+			if isDigit(p) != isDigit(c) || (isLower(p) && isUpper(c)) || acronymEnd {
+				parts = append(parts, s[start:i])
+				start = i
+			}
+		}
+	}
+	if start < len(s) {
+		parts = append(parts, s[start:])
+	}
+	return parts
 }
 
 func shannonEntropy(s string) float64 {
